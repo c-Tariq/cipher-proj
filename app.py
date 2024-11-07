@@ -4,7 +4,47 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_wtf import FlaskForm
 from wtforms import FileField, SubmitField
 from wtforms.validators import InputRequired
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad, unpad
+from hashlib import pbkdf2_hmac
+import os
 import io
+
+key = os.urandom(16)
+iv = os.urandom(16)
+mode = AES.MODE_CBC
+size = AES.block_size
+salt = os.urandom(16)
+password = "F$2hR&v*Wm9o@H2b"
+
+
+def get_key(password, salt): 
+    return pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000, dklen=16)
+ 
+
+def encrypt(data):
+    key = get_key(password,salt) 
+
+    encrypter = AES.new(key, mode)
+
+    p_data = pad(data, size)
+    c_text = encrypter.encrypt(p_data)
+    return salt + encrypter.iv + c_text  
+
+
+def decrypt(enc_data):
+    salt = enc_data[:16]
+    iv = enc_data[16:32]  
+    c_text = enc_data[32:] 
+
+    key = get_key(password,salt) 
+    decrypter = AES.new(key, mode, iv)
+
+    unp_data = decrypter.decrypt(c_text)
+    plaintext = unpad(unp_data, size)
+
+    return plaintext
+
 
 app = Flask(__name__)
 app.secret_key = "super_secret_key"  # change this to something secure
@@ -103,7 +143,8 @@ def dashboard():
             return redirect(url_for("dashboard"))
 
         # Save file to database
-        new_file = File(filename=file.filename, data=file.read(), user_id=user_id)
+        encrypt_data = encrypt(file.read())
+        new_file = File(filename=file.filename, data=encrypt_data, user_id=user_id)
         db.session.add(new_file)
         db.session.commit()
         return redirect(url_for("dashboard"))
@@ -118,7 +159,8 @@ def download_file(file_id):
     
     file_data = File.query.get(file_id)
     if file_data and file_data.user_id == session['user_id']:
-        return send_file(io.BytesIO(file_data.data), download_name=file_data.filename, as_attachment=True)
+        decrypted_data = decrypt(file_data.data)
+        return send_file(io.BytesIO(decrypted_data), download_name=file_data.filename, as_attachment=True)
     else:
         flash("Unauthorized access", "error")
         return redirect(url_for("dashboard"))
